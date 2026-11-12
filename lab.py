@@ -1,6 +1,7 @@
 """Small PostgreSQL lab runner. No student SQL solutions are included."""
 import argparse
 from collections import Counter
+from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal
 import json
@@ -111,6 +112,7 @@ def normalize(value):
 
 def compare(rows, expected):
     actual = [[normalize(x) for x in row] for row in rows]
+    expected = [[normalize(x) for x in row] for row in expected]
     def equal(a,b):
         if len(a)!=len(b): return False
         for x,y in zip(a,b):
@@ -142,10 +144,124 @@ def contract(cursor, spec):
             raise AssertionError(f'Type of {d.name}: expected {f[1]}, actual PostgreSQL OID {d.type_code}')
 
 
-def validate(conn, exercise, path):
-    fixture(conn)
+def base_expectations(conn, exercise):
+    """Independent checks built from source records, without reference SQL solutions."""
+    customers=conn.execute('SELECT * FROM customers ORDER BY customer_id').fetchall()
+    updates=conn.execute('SELECT * FROM customer_updates').fetchall()
+    if exercise=='06':
+        state={row[0]:list(row) for row in customers}
+        expected={}
+        for batch in sorted({row[1] for row in updates}):
+            for row in updates:
+                if row[1]!=batch: continue
+                candidate=list(row[2:8])
+                previous=state.get(candidate[0])
+                if previous is None or tuple(candidate[3:])>tuple(previous[3:]):
+                    state[candidate[0]]=candidate
+            expected[batch]=[state[key][:] for key in sorted(state)]
+        return expected
+    if exercise=='04':
+        winners={}
+        for row in updates:
+            priority=(row[5],row[6],row[7],row[8],row[0])
+            previous=winners.get(row[2])
+            if previous is None or priority>previous[0]:
+                winners[row[2]]=(priority,list(row[2:8])+[row[0]])
+        return [winners[key][1] for key in sorted(winners)]
+
+    products=conn.execute('SELECT product_id,category_id FROM products').fetchall()
+    categories=dict(products)
+    paid={row[0] for row in conn.execute("SELECT order_id FROM payments WHERE status='succeeded'")}
+    orders={row[0]:row for row in conn.execute('SELECT order_id,customer_id,ordered_at,status FROM orders')
+            if row[3]=='completed' and row[0] in paid and row[2]<datetime(2025,1,1)}
+    amounts=defaultdict(Decimal)
+    category_amounts=defaultdict(lambda:defaultdict(Decimal))
+    product_months=defaultdict(Decimal)
+    sold=set()
+    for oid,_,pid,quantity,price,discount in conn.execute('SELECT * FROM order_items'):
+        if oid not in orders: continue
+        net=quantity*price-discount
+        amounts[oid]+=net
+        customer=orders[oid][1]
+        category_amounts[customer][categories[pid]]+=net
+        month=orders[oid][2].date().replace(day=1)
+        product_months[(month,categories[pid],pid)]+=net
+        sold.add(pid)
+    history=defaultdict(list)
+    for oid,cid,when,_ in orders.values():
+        history[cid].append((when,oid,amounts[oid]))
+    for purchases in history.values(): purchases.sort()
+    output=[]
+    if exercise=='01':
+        for cid,*_ in customers:
+            purchases=history[cid]
+            if not purchases:
+                output.append([cid,None,None,None,None,0,Decimal(0),None,None])
+            for pos,(when,oid,_) in enumerate(purchases):
+                gap=None if pos==0 else Decimal(str((when-purchases[pos-1][0]).total_seconds()))/86400
+                output.append([cid,oid,when,purchases[0][0],purchases[-1][0],len(purchases),
+                               sum(p[2] for p in purchases),pos+1,gap])
+    elif exercise=='02':
+        groups=defaultdict(list)
+        for (month,category,pid),amount in product_months.items(): groups[(month,category)].append((pid,amount))
+        for (month,category),entries in sorted(groups.items()):
+            total=sum(amount for _,amount in entries)
+            levels=sorted({amount for _,amount in entries},reverse=True)
+            for pid,amount in sorted(entries,key=lambda item:(-item[1],item[0])):
+                rank=levels.index(amount)+1
+                if rank<=3:
+                    pct=None if total==0 else (amount*100/total).quantize(Decimal('.01'),rounding='ROUND_HALF_UP')
+                    output.append([month,category,pid,amount,rank,pct])
+    elif exercise=='03':
+        cohorts=defaultdict(list)
+        for cid,purchases in history.items():
+            if purchases: cohorts[purchases[0][0].date().replace(day=1)].append(cid)
+        for cohort,members in sorted(cohorts.items()):
+            activity=cohort
+            while activity<date(2025,1,1):
+                active=sum(any(p[0].date().replace(day=1)==activity for p in history[cid]) for cid in members)
+                offset=(activity.year-cohort.year)*12+activity.month-cohort.month
+                pct=(Decimal(active)*100/len(members)).quantize(Decimal('.01'),rounding='ROUND_HALF_UP')
+                output.append([cohort,activity,offset,len(members),active,pct])
+                activity=date(activity.year+activity.month//12,activity.month%12+1,1)
+    elif exercise=='05a':
+        output=[[cid] for cid,purchases in sorted(history.items()) if len(purchases)>=2 and any(p[2]>=100 for p in purchases)]
+    elif exercise=='05b':
+        output=[[pid] for pid,_ in sorted(products) if pid not in sold]
+    elif exercise=='05c':
+        for cid,*_ in customers:
+            p=history[cid][-1] if history[cid] else None
+            output.append([cid,p[1],p[0],p[2]] if p else [cid,None,None,None])
+    elif exercise=='07':
+        monthly=defaultdict(Decimal)
+        for cid,purchases in history.items():
+            for when,_,amount in purchases:
+                if when>=datetime(2024,7,1): monthly[(when.date().replace(day=1),cid)]+=amount
+        output=[[month,cid,amount] for (month,cid),amount in sorted(monthly.items())]
+    elif exercise=='08':
+        for cid,purchases in history.items():
+            total=sum(p[2] for p in purchases)
+            if len(purchases)<2 or total<150 or purchases[-1][0]>=datetime(2024,10,1): continue
+            last=purchases[-1][0]
+            favorite=min(category_amounts[cid],key=lambda cat:(-category_amounts[cid][cat],cat))
+            output.append([cid,last,Decimal(str((datetime(2025,1,1)-last).total_seconds()))/86400,
+                           len(purchases),total,len({p[0].date().replace(day=1) for p in purchases}),favorite,
+                           sum((p[2] for p in purchases if p[0]>=datetime(2024,7,1)),Decimal(0))])
+        output.sort(key=lambda row:(-row[4],row[0]))
+    return [[normalize(value) for value in row] for row in output]
+
+
+def validate(conn, exercise, path, use_fixtures=False):
+    if use_fixtures:
+        fixture(conn)
+    else:
+        conn.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        if exercise!='06': conn.execute('SET TRANSACTION READ ONLY')
+        conn.execute('SET search_path TO lab')
+    source='isolated fixtures' if use_fixtures else 'sql_challenge.lab (your dataset)'
+    print(f'Validating {exercise} against {source}.',flush=True)
     cases=json.loads(read('tests/cases.json'))
-    expected=cases['expected']
+    expected=cases['expected'] if use_fixtures else {exercise:base_expectations(conn,exercise)}
     submission=Path(path).read_text(encoding='utf-8-sig')
     if exercise.startswith('05'):
         marker='-- PART '+exercise[-1].upper()
@@ -157,7 +273,14 @@ def validate(conn, exercise, path):
             raise ValueError('incremental schema already exists; use a clean dedicated database for fixture validation.')
         conn.execute('CREATE SCHEMA incremental; CREATE TABLE incremental.customers (LIKE customers INCLUDING ALL); INSERT INTO incremental.customers SELECT * FROM customers')
         previous=None
-        for batch,replay,state in [(1,False,'06_1'),(1,True,'06_1'),(2,False,'06_2'),(1,True,'06_2'),(2,True,'06_2')]:
+        if use_fixtures:
+            schedule=[(1,False,'06_1'),(1,True,'06_1'),(2,False,'06_2'),(1,True,'06_2'),(2,True,'06_2')]
+        else:
+            expected=expected['06']
+            batches=sorted(expected)
+            schedule=[entry for batch in batches for entry in [(batch,False,batch),(batch,True,batch)]]
+            if len(batches)>1: schedule.append((batches[0],True,batches[-1]))
+        for batch,replay,state in schedule:
             conn.execute("SELECT set_config('lab.batch_id',%s,true)",(str(batch),))
             conn.execute(submission)
             rows=conn.execute('SELECT * FROM incremental.customers ORDER BY customer_id').fetchall()
@@ -173,14 +296,14 @@ def validate(conn, exercise, path):
             raise AssertionError('Submission must return the requested result columns.')
         contract(cursor,spec)
         compare(cursor.fetchall(),expected[exercise])
-        if exercise=='02':
+        if exercise=='02' and use_fixtures:
             conn.rollback()
             fixture(conn,'ranking')
             cursor=conn.execute(submission)
             contract(cursor,spec)
             compare(cursor.fetchall(),cases['ranking_expected'])
     conn.rollback()
-    print(f'{exercise}: fixture checks passed. Not graded; mentor review is still required.')
+    print(f'{exercise}: checks passed against {source}. Not graded; mentor review is still required.')
 
 
 def perf(conn, scale, commit=True):
@@ -250,7 +373,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)
     sub.add_parser('setup');sub.add_parser('check')
-    p=sub.add_parser('validate');p.add_argument('exercise',choices=['01','02','03','04','05a','05b','05c','06','07','08']);p.add_argument('--file',required=True)
+    p=sub.add_parser('validate');p.add_argument('exercise',choices=['01','02','03','04','05a','05b','05c','06','07','08']);p.add_argument('--file',required=True);p.add_argument('--fixtures',action='store_true',help='Run additional small edge cases instead of the visible lab dataset')
     p=sub.add_parser('perf');p.add_argument('--scale',type=int,default=10)
     p=sub.add_parser('benchmark');p.add_argument('--file',required=True);p.add_argument('--label',required=True)
     args=parser.parse_args()
@@ -258,7 +381,7 @@ def main():
         try:
             if args.command=='setup': setup(conn)
             elif args.command=='check': verify_base(conn)
-            elif args.command=='validate': validate(conn,args.exercise,args.file)
+            elif args.command=='validate': validate(conn,args.exercise,args.file,args.fixtures)
             elif args.command=='perf': perf(conn,args.scale)
             else: benchmark(conn,args.file,args.label)
         except Exception:

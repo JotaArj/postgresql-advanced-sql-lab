@@ -1,0 +1,38 @@
+{
+    "editor.quickSuggestions": {
+        "other": true,
+        "comments": false,
+        "strings": false
+    },
+    "editor.suggestOnTriggerCharacters": false,
+    "editor.inlineSuggest.enabled": false,
+    "editor.tabCompletion": "off",
+    "editor.wordBasedSuggestions": "currentDocument",
+    "editor.snippetSuggestions": "none",
+    "github.copilot.enable": {
+        "*": false
+    },
+    "sqltools.connections": [
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 5432,
+            "askForPassword": true,
+            "driver": "PostgreSQL",
+            "name": "SQL PostgreSQL Advanced",
+            "database": "sql_challenge",
+            "username": "lab"
+        },
+        {
+            "ssh": "Disabled",
+            "previewLimit": 50,
+            "server": "localhost",
+            "port": 55432,
+            "driver": "PostgreSQL",
+            "database": "sql_challenge",
+            "username": "lab",
+            "name": "SQL PostgreSQL Advanced 2"
+        }
+    ]
+}

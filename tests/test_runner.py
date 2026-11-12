@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 from decimal import Decimal
 import io
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -59,7 +60,25 @@ class DatabaseTests(unittest.TestCase):
 
     def test_only_supplied_reporting_query_matches_fixture(self):
         with redirect_stdout(io.StringIO()):
+            lab.validate(self.conn,'07',lab.ROOT/'benchmarks/baseline.sql',use_fixtures=True)
+
+    def test_independent_checks_match_hand_authored_cases(self):
+        lab.fixture(self.conn)
+        cases=json.loads(lab.read('tests/cases.json'))['expected']
+        for exercise in ('01','02','03','04','05a','05b','05c','07','08'):
+            with self.subTest(exercise=exercise):
+                lab.compare(lab.base_expectations(self.conn,exercise),cases[exercise])
+        batches=lab.base_expectations(self.conn,'06')
+        lab.compare(batches[1],cases['06_1'])
+        lab.compare(batches[2],cases['06_2'])
+        self.conn.rollback()
+        lab.fixture(self.conn,'ranking')
+        lab.compare(lab.base_expectations(self.conn,'02'),json.loads(lab.read('tests/cases.json'))['ranking_expected'])
+
+    def test_default_validation_uses_visible_base(self):
+        with redirect_stdout(io.StringIO()) as output:
             lab.validate(self.conn,'07',lab.ROOT/'benchmarks/baseline.sql')
+        self.assertIn('sql_challenge.lab (your dataset)',output.getvalue())
 
     def test_new_setup_is_refused(self):
         with self.assertRaisesRegex(ValueError,'already exists'):

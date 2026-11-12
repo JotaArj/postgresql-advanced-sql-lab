@@ -79,8 +79,8 @@ produce the same 2024 dataset without depending on random state or the wall cloc
 
 | # | Exercise | Main skills | Status |
 |---|---|---|---|
-| 01 | Customer Purchase Analysis | Windows, chronology, aggregation, NULL | Not submitted |
-| 02 | Product Revenue Ranking | Ties, monthly revenue, category shares | Not submitted |
+| 01 | Customer Purchase Analysis | Windows, chronology, aggregation, NULL | Reviewed — 9/10 |
+| 02 | Product Revenue Ranking | Ties, monthly revenue, category shares | Completed — 9/10 |
 | 03 | Monthly Customer Retention | Cohorts, calendar periods, inactive months | Not submitted |
 | 04 | Data Deduplication | Version priority, deterministic selection | Not submitted |
 | 05 | EXISTS, NOT EXISTS and LATERAL | Cardinality, correlated logic, latest purchase | Not submitted |
@@ -103,17 +103,24 @@ For exercise 05, write all three queries in its single file beneath `-- PART A`,
 `-- PART B` and `-- PART C`. Validate each with `validate 05a`, `05b` or `05c`,
 passing that same file. Other exercises use their two-digit number.
 
-Tests use hand-authored fixtures and literal expected results, not SQL answer keys.
-They check names, compatible types, row counts, order, exact values, duplicates and
-NULLs. Cases include multiple payment successes, discounts, a zero-revenue purchase,
-the exclusive cutoff, ranking ties and staging priorities. Exercise 06 checks full
-destination state and physical no-op behavior for batches 1, 1, 2, 1, 2.
+By default, validation uses **your visible `sql_challenge.lab` dataset**. Error IDs
+refer to the same customers and orders you can inspect in your SQL client. Expected
+values are calculated independently from source records in Python, without SQL
+answer keys. Checks cover names, compatible types, row counts, order, exact values,
+duplicates and NULLs. Analytical validation runs in a read-only snapshot.
 
-Source tables must be unqualified so fixtures can replace the search path. The runner
-creates transactional test schemas and rolls them back; do not use COMMIT/ROLLBACK
-in submissions. This is trusted local SQL, not a security sandbox. A failed check
-shows the condition and an example without hints. Passing fixtures still requires
-technical review before grading.
+Small, hand-authored edge cases remain available explicitly: append `--fixtures`
+to the validation command. The runner announces the dataset before executing SQL.
+Those additional cases use different IDs and cover the exclusive cutoff, zero revenue,
+ranking ties and staging priorities. They run in temporary transactional schemas.
+Keep source table names unqualified to support both modes.
+
+Exercise 06 reads the selected dataset but writes only to a transactional copy in
+`incremental.customers`; it checks destination state, repeated batches and replaying
+an older batch after newer batches. All test changes are rolled back. Do not use
+COMMIT/ROLLBACK in submissions. This is trusted local SQL, not a security sandbox.
+A failed check shows the condition and an example without hints. Passing checks
+still requires technical review before grading.
 
 Assessment: correctness 40%, edge cases 20%, clarity 15%, technique 15%, performance
 and justification 10%. For exercise 07: 30%, 10%, 10%, 10%, 40%, respectively.
@@ -144,8 +151,20 @@ Do not force plans. Claim a speedup only when measurements support it.
 Local setup on 2026-11-11: PostgreSQL 16.14, healthy on port 55432; expected base
 counts and five validated foreign keys. Data checks cover customers without orders,
 unsold products, NULLs, failed payments, duplicates and out-of-order updates.
-Runner self-tests: **12 passed**. Scale-2 integrity was tested transactionally and
-rolled back; base data stayed unchanged. No learner exercise has been passed or graded.
+Runner self-tests: **14 passed**, including default validation on `lab` and independent
+expected-value calculations cross-checked against hand-authored fixtures.
+Scale-2 integrity was tested transactionally and
+rolled back; base data stayed unchanged. Exercise 01 passed validation on `lab`,
+the hand-authored fixtures and an additional fractional-day case (12 hours), and
+received a technical review score of **9/10**. Subsequent exercise 01 experiments
+compared equivalent query variants using alternating warm executions; evidence is
+stored locally in `artifacts/`. Results apply to this dataset and measurement conditions.
+Exercise 02 passed validation on `lab` and both fixture scenarios (including ties
+and zero category revenue), and received a final technical review score of **9/10**.
+Its comments are bilingual. Alternating measurements showed no demonstrated speed
+improvement from INNER JOIN or an experimental index on order_items(product_id).
+INNER JOIN was retained for its semantics. Query comments record the conditions
+and local evidence. Exercises 03–08 are not submitted.
 
 Synthetic formulas introduce correlations unlike production. The model omits refunds,
 tax, shipping, changing categories and multiple currencies. Scaling adds orders rather
